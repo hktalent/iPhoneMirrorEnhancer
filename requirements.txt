@@ -1,0 +1,4 @@
+pygame
+numpy
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
