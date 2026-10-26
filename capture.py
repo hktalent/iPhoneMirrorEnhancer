@@ -176,9 +176,14 @@ class ContinuousCapture:
             return self._latest
 
     @staticmethod
-    def is_blank(frame, sample_stride: int = 4000) -> bool:
-        """粗略判断一帧是否基本全黑（用于跳过手机过渡期黑帧）。"""
-        b = frame.bgra
+    def is_blank(bgra, sample_stride: int = 4000) -> bool:
+        """粗略判断一帧是否基本全黑（用于跳过手机过渡期黑帧）。
+
+        入参可为 _Frame 或纯 BGRA bytes。
+        """
+        if hasattr(bgra, "bgra"):
+            bgra = bgra.bgra
+        b = bgra
         n = len(b)
         if n == 0:
             return True

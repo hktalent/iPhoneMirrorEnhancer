@@ -21,6 +21,7 @@ import pygame
 
 import config
 from capture import ContinuousCapture
+from av_capture import AVCapture
 from display import MirrorDisplay
 
 
@@ -34,10 +35,16 @@ def list_displays():
 
 
 def run(owner: str, display_index: int, frame_ms: int, preserve_aspect: bool):
-    cap = ContinuousCapture(owner)
     disp = MirrorDisplay(display_index, background=config.BACKGROUND)
-    cap.start()
 
+    # 优先用 AVFoundation 高速后端；启动失败或无帧则回退 CGWindowList
+    cap_av = AVCapture(owner)
+    cap_cg = None
+    backend = "av" if cap_av.start() else "cg"
+    if backend == "cg":
+        cap_cg = ContinuousCapture(owner)
+        cap_cg.start()
+    print(f"[i] 捕获后端: {backend} (av=GPU加速 / cg=兼容)")
     print(
         f"[i] 窗口进程: {owner}\n"
         f"[i] 全屏目标: 显示器[{display_index}] {disp.width}x{disp.height}\n"
@@ -52,6 +59,8 @@ def run(owner: str, display_index: int, frame_ms: int, preserve_aspect: bool):
     last_surface = None
     stats_t0 = time.time()
     stats_frames = 0
+    av_start_t = time.time()
+    av_fallback = False
 
     while running:
         # 处理事件
@@ -62,30 +71,51 @@ def run(owner: str, display_index: int, frame_ms: int, preserve_aspect: bool):
                 if e.key == pygame.K_ESCAPE:
                     running = False
                 elif e.key == pygame.K_r:
-                    cap._cap._win = None  # 触发重新定位
+                    if backend == "av":
+                        cap_av.refresh_location(force=True)
+                    elif cap_cg is not None:
+                        cap_cg._cap._win = None
                     print("[i] 已请求重新定位窗口")
 
-        # 取最新一帧
-        item = cap.read()
+        # 取最新一帧（统一为 (seq, bgra, w, h)）
+        item = None
+        if backend == "av":
+            r = cap_av.read()
+            if r is not None:
+                item = (r[0], r[3], r[1], r[2])
+            # AV 兜底：3 秒内无帧则回退
+            if not av_fallback and time.time() - av_start_t > 3.0 and r is None:
+                av_fallback = True
+                print("[i] AV 后端未出帧，回退到兼容后端", flush=True)
+                cap_av.stop()
+                backend = "cg"
+                cap_cg = ContinuousCapture(owner)
+                cap_cg.start()
+        else:
+            r = cap_cg.read()
+            if r is not None:
+                seq0, frame = r
+                item = (seq0, frame.bgra, frame.size[0], frame.size[1])
+
         if item is not None:
-            seq, frame = item
-            if seq != last_seq:
-                last_seq = seq
+            seq0, bgra, w, h = item
+            if seq0 != last_seq:
+                last_seq = seq0
                 # 跳过「基本全黑」的过渡帧，保留上一帧，避免整屏黑屏闪烁
-                if not cap.is_blank(frame):
-                    surface = disp._surface_from_frame(frame)
+                if not ContinuousCapture.is_blank(bgra):
+                    surface = pygame.image.frombuffer(bgra, (w, h), "BGRA")
                     disp.render(surface, preserve_aspect)
                     last_surface = surface
                     stats_frames += 1
-                # 若新帧仍非 None 但偏黑，则继续保留上一帧（不重绘，避免闪黑）
                 elif last_surface is None:
                     disp.render(
-                        disp._surface_from_frame(frame), preserve_aspect
+                        pygame.image.frombuffer(bgra, (w, h), "BGRA"),
+                        preserve_aspect,
                     )
 
         # 定期打印 FPS，便于判断刷新率
         if time.time() - stats_t0 >= 3.0:
-            fps = stats_frames / (time.time() - stats_t0)
+            fps = stats_frames / max(1e-6, time.time() - stats_t0)
             print(f"[i] 显示刷新约 {fps:.1f} fps", flush=True)
             stats_t0 = time.time()
             stats_frames = 0
@@ -93,7 +123,10 @@ def run(owner: str, display_index: int, frame_ms: int, preserve_aspect: bool):
         if frame_ms:
             clock.tick(1000 // max(frame_ms, 1))
 
-    cap.stop()
+    if backend == "av":
+        cap_av.stop()
+    else:
+        cap_cg.stop()
     disp.quit()
     print("[i] 已退出。")
 

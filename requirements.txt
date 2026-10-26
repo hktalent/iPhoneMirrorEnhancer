@@ -2,3 +2,6 @@ pygame
 numpy
 pyobjc-framework-Cocoa
 pyobjc-framework-Quartz
+pyobjc-framework-AVFoundation
+pyobjc-framework-CoreMedia
+pyobjc-framework-libdispatch

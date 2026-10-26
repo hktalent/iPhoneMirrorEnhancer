@@ -25,10 +25,11 @@ iPhone ──镜像──> macOS(小窗口) ──本工具放大──> 扩展�
 iPhone 镜像窗口（屏幕上一小块，如 666×346 点）
         │  CGWindowList 定位窗口 bounds（点坐标）
         ▼
-CGWindowListCreateImage 抓取该窗口区域
-        │  （返回 Retina 物理像素，如 1332×692；只抓窗口，不抓整屏）
+AVFoundation AVCaptureScreenInput（GPU 加速）
+        │  流式抓取窗口区域，Retina 物理像素（1332×692）
+        │  后台队列持续回调，~30-60fps
         ▼
-CGImage → BGRA 字节缓冲（numpy 处理行填充）
+CVPixelBuffer → BGRA 字节（numpy 处理行填充）
         │  pygame.image.frombuffer("BGRA")
         ▼
 scale = min(屏宽/帧宽, 屏高/帧高) 等比放大 → smoothscale
@@ -38,7 +39,8 @@ scale = min(屏宽/帧宽, 屏高/帧高) 等比放大 → smoothscale
 
 即使镜像窗口在 Mac 上显示得很小，也只会被放大这一小块，**不会把整个主屏复制过去**，且保持原始宽高比、不拉伸变形。
 
-> 注意：macOS 上报的屏幕尺寸是"逻辑点"分辨率。早期版本误用 `mss` 抓帧时，把像素区域当点坐标传入，导致抓到整屏；现改用 `CGWindowListCreateImage`，区域精确到窗口本身、分辨率更高。
+> **刷新率**：默认用 **AVFoundation（GPU 加速）** 捕获，可达 30-60fps；若该后端启动失败或 3 秒内不出帧，自动回退到兼容的 CGWindowList 方案（约 10fps）。程序每 3 秒打印一次实际 `fps`。
+> **注意**：macOS 上报的屏幕尺寸是"逻辑点"分辨率。早期版本误用 `mss` 抓帧时把像素区域当点坐标传入导致抓到整屏；现统一用窗口区域捕获，区域精确、分辨率更高。
 
 ### 安装
 
@@ -49,7 +51,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> 依赖：`pygame`、`numpy`、`pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz`
+> 依赖：`pygame`、`numpy`、`pyobjc-framework-Cocoa`、`pyobjc-framework-Quartz`、`pyobjc-framework-AVFoundation`、`pyobjc-framework-CoreMedia`、`pyobjc-framework-libdispatch`
 
 ### 运行
 
@@ -114,8 +116,8 @@ macOS 较新版本支持系统级多音箱：
 
 ## 常见问题
 
-- **扩展屏偶尔黑屏/闪烁** → 已做两层防护：抓帧在**后台线程**持续进行、主线程只渲染最新帧；并**自动跳过过渡期的黑帧**（如手机切屏/转场瞬间），始终保留上一帧，避免整屏闪黑。程序每 3 秒打印一次实际 `fps`，可据此判断刷新率。
-- **刷新率偏低** → 用 `--fps 60` 提速；若仍偏低，说明系统级抓图（CGWindowList）存在约 100ms/帧的开销，可在 `config.py` 降低抓取分辨率或联系我们接入 GPU 加速捕获。
+- **扩展屏偶尔黑屏/闪烁** → 已做三层防护：AVFoundation 后台流式抓帧；只渲染最新帧；**自动跳过过渡期黑帧**，始终保留上一帧，避免整屏闪黑。
+- **刷新率偏低** → 默认已用 GPU 加速捕获（约 30-60fps）；若仍打印 `fps` 偏低，说明回退到了兼容后端，可检查屏幕录制权限。
 - **画面全黑** → 屏幕录制权限未给/未重启终端；或镜像窗口被遮挡。
 - **找不到窗口** → `ps aux | grep -i mirror` 看真实进程名，用 `--owner` 指定。
 - **扩展屏序号报错** → 先 `--list-displays`。
