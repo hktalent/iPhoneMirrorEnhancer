@@ -9,7 +9,9 @@ iPhone ──镜像──> macOS(小窗口) ──本工具放大──> 扩展�
                       │
                       └──音频──> 多蓝牙音箱同步输出（Audio MIDI Setup 多输出设备）
 ```
-<img width="2490" height="1340" alt="image" src="https://github.com/user-attachments/assets/bbdbb4f1-8de2-44ff-9285-0e5decbbc7f1" />
+<img width="600" alt="image" src="https://github.com/user-attachments/assets/bbdbb4f1-8de2-44ff-9285-0e5decbbc7f1" />
+<img width="600" alt="IMG_0499" src="https://github.com/user-attachments/assets/ffdfa59c-be0e-471f-92f2-cff0f7e2ffde" />
+
 
 - **视频**：把 macOS 上 `iPhone 镜像` 那个**很小的窗口**，实时捕捉、等比放大、全屏渲染到扩展桌面（可接电视）。
 - **音频**：Mac 系统声音通过 **Audio MIDI Setup** 配置的「多输出设备」，**同时**输出到多台蓝牙音箱，做到多设备同步发声。
