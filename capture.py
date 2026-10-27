@@ -18,11 +18,7 @@ import threading
 import time
 
 import Quartz  # pyobjc-framework-Quartz
-from AppKit import (  # pyobjc-framework-Cocoa
-    NSScreen,
-    NSRunningApplication,
-    NSApplicationActivateIgnoringOtherApps,
-)
+from AppKit import NSScreen  # pyobjc-framework-Cocoa
 
 
 class _Frame:
@@ -47,59 +43,17 @@ class MirrorCapture:
     # ------------------------------------------------------------------
     # 窗口定位
     # ------------------------------------------------------------------
-    @staticmethod
-    def _find_windows_all(owner_name):
-        """跨所有桌面枚举该进程的窗口。"""
-        opts = (
-            Quartz.kCGWindowListOptionAll
-            | Quartz.kCGWindowListExcludeDesktopElements
-        )
-        info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
-        return [
-            w for w in info or [] if (w.get("kCGWindowOwnerName") or "") == owner_name
-        ]
-
-    @staticmethod
-    def _pick_main_window(windows):
-        """选面积最大的真实窗口，排除菜单栏/状态条(高度<=40)。"""
-        best = None
-        best_area = -1
-        for w in windows:
-            b = w.get("kCGWindowBounds", {})
-            hgt = b.get("Height", 0)
-            if hgt <= 40:
-                continue
-            area = b.get("Width", 0) * hgt
-            if area > best_area:
-                best_area = area
-                best = w
-        return best
-
-    @staticmethod
-    def _on_current_space(win) -> bool:
-        """该窗口是否在当前桌面可见列表中。"""
+    def _find_window(self):
+        """返回窗口信息 dict 或 None。"""
         opts = (
             Quartz.kCGWindowListOptionOnScreenOnly
             | Quartz.kCGWindowListExcludeDesktopElements
         )
         info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
-        ids = {x.get("kCGWindowNumber") for x in info or []}
-        return win.get("kCGWindowNumber") in ids
-
-    @staticmethod
-    def _bring_to_current_space(pid):
-        try:
-            app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
-            if app is not None:
-                app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
-                return True
-        except Exception:
-            pass
-        return False
-
-    def _find_window(self):
-        """跨桌面找到主窗口信息 dict 或 None。"""
-        return self._pick_main_window(self._find_windows_all(self.owner_name))
+        for w in info or []:
+            if w.get("kCGWindowOwnerName") == self.owner_name:
+                return w
+        return None
 
     @staticmethod
     def _backing_scale_for_point(x: float, y: float) -> float:
@@ -119,13 +73,6 @@ class MirrorCapture:
             self._win = None
             self._rect = None
             return False
-        # 窗口在其他桌面：先激活带回当前桌面，屏幕捕获才能看到
-        if not self._on_current_space(win) and self._bring_to_current_space(
-            win.get("kCGWindowOwnerPID")
-        ):
-            import time
-            time.sleep(0.4)
-            win = self._find_window() or win
         self._win = win
         b = win.get("kCGWindowBounds") or {}
         self._scale = self._backing_scale_for_point(
