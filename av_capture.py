@@ -23,7 +23,11 @@ import CoreMedia as CM
 import dispatch
 from Foundation import NSObject
 from Quartz import CoreVideo as CV
-from AppKit import NSScreen
+from AppKit import (
+    NSScreen,
+    NSRunningApplication,
+    NSApplicationActivateIgnoringOtherApps,
+)
 
 
 class _AVOutputDelegate(NSObject):
@@ -53,17 +57,70 @@ class _AVOutputDelegate(NSObject):
         return None
 
 
-def find_window_bounds(owner: str):
-    """返回 iPhone 镜像窗口的 bounds dict（点坐标，全局左上原点），无则 None。"""
+def _all_windows(owner: str):
+    """跨所有桌面(Space)枚举指定进程的窗口。"""
+    opts = (
+        Quartz.kCGWindowListOptionAll
+        | Quartz.kCGWindowListExcludeDesktopElements
+    )
+    info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
+    return [w for w in info or [] if (w.get("kCGWindowOwnerName") or "") == owner]
+
+
+def _pick_main_window(windows):
+    """选面积最大的主窗口，排除菜单栏/状态条(高度过小)。"""
+    best = None
+    best_area = -1
+    for w in windows:
+        b = w.get("kCGWindowBounds", {})
+        wdt = b.get("Width", 0)
+        hgt = b.get("Height", 0)
+        if hgt <= 40:          # 排除 30px 菜单栏条
+            continue
+        area = wdt * hgt
+        if area > best_area:
+            best_area = area
+            best = w
+    return best
+
+
+def _on_current_space(w) -> bool:
+    """该窗口是否出现在当前桌面的可见窗口列表中。"""
     opts = (
         Quartz.kCGWindowListOptionOnScreenOnly
         | Quartz.kCGWindowListExcludeDesktopElements
     )
     info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
-    for w in info or []:
-        if w.get("kCGWindowOwnerName") == owner:
-            return w.get("kCGWindowBounds") or {}
-    return None
+    ids = {x.get("kCGWindowNumber") for x in info or []}
+    return w.get("kCGWindowNumber") in ids
+
+
+def _bring_to_current_space(pid) -> bool:
+    """激活该 App，把其窗口带到当前桌面/前台（屏幕捕获才能看到）。"""
+    try:
+        app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if app is not None:
+            app.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def find_window_bounds(owner: str):
+    """跨桌面返回 iPhone 镜像窗口信息（bounds + id + pid）。
+
+    返回 dict 或 None。只用面积最大的真实窗口，避开菜单栏条窗口。
+    """
+    w = _pick_main_window(_all_windows(owner))
+    if w is None:
+        return None
+    return {
+        "bounds": w.get("kCGWindowBounds") or {},
+        "id": w.get("kCGWindowNumber"),
+        "pid": w.get("kCGWindowOwnerPID"),
+        "on_current_space": _on_current_space(w),
+    }
 
 
 def display_and_crop(bounds: dict):
@@ -107,9 +164,17 @@ class AVCapture:
     # 生命周期
     # ------------------------------------------------------------------
     def start(self) -> bool:
-        bounds = find_window_bounds(self.owner_name)
-        if not bounds:
+        info = find_window_bounds(self.owner_name)
+        if not info:
             return False
+        # 窗口在其他桌面时，先激活 App 带到当前桌面，屏幕捕获才能看到
+        if not info.get("on_current_space"):
+            pid = info.get("pid")
+            if _bring_to_current_space(pid):
+                import time
+                time.sleep(0.4)
+                info = find_window_bounds(self.owner_name) or info
+        bounds = info["bounds"]
         did, crop = display_and_crop(bounds)
         try:
             session = AV.AVCaptureSession.alloc().init()
@@ -160,9 +225,18 @@ class AVCapture:
         if self._screen_input is None:
             return False
         try:
-            b = find_window_bounds(self.owner_name)
-            if not b:
+            info = find_window_bounds(self.owner_name)
+            if not info:
                 return False
+            b = info["bounds"]
+            # 窗口被挪到其他桌面：重新激活带回当前桌面
+            if not info.get("on_current_space") and _bring_to_current_space(
+                info.get("pid")
+            ):
+                import time
+                time.sleep(0.3)
+                info = find_window_bounds(self.owner_name) or info
+                b = info["bounds"]
             moved = force or self._current_bounds is None
             if not moved:
                 old = self._current_bounds
